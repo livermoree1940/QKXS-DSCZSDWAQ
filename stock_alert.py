@@ -54,6 +54,18 @@ STOCK_CONFIGS = [
         'code': '601728',
         'alert_type': 'three_above_ma',  # 连续三根k线站上20日均线预警
         'ma_line': 20     # 均线参数（20日）
+    },
+    {
+        'name': '长江电力',
+        'code': '600900',
+        'alert_type': 'three_above_ma',  # 连续三根k线站上20日均线预警
+        'ma_line': 20     # 均线参数（20日）
+    },
+    {
+        'name': '通威股份',
+        'code': '600438',
+        'alert_type': 'three_above_ma',  # 连续三根k线站上20日均线预警
+        'ma_line': 20     # 均线参数（20日）
     }
 ]
 
