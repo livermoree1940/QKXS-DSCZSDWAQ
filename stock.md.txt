@@ -1,0 +1,296 @@
+import pandas as pd
+from datetime import datetime, timedelta
+import akshare as ak
+import time
+from utils_email import send_email_if_signal
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+# ----------------- 配置 -----------------
+STOCK_LIST = [
+    {"code": "600900", "name": "长江电力", "type": "stock"},
+    {"code": "002542", "name": "中化岩土", "type": "stock"},
+    {"code": "601336", "name": "新华保险", "type": "stock"},
+    {"code": "601728", "name": "中国电信", "type": "stock"},
+    {"code": "600030", "name": "中信证券", "type": "stock"},
+    {"code": "600028", "name": "中国石化", "type": "stock"},
+    {"code": "601288", "name": "农业银行", "type": "stock"},
+    {"code": "510300", "name": "沪深300ETF", "type": "etf"},
+    {"code": "510500", "name": "中证500ETF", "type": "etf"},
+    {"code": "512880", "name": "证券ETF", "type": "etf"},
+    {"code": "563300", "name": "中证2000ETF", "type": "etf"},
+    {"code": "159707", "name": "地产ETF", "type": "etf"}
+]
+
+def plot_stock_ma60(df: pd.DataFrame, stock_name: str, filename: str) -> bool:
+    """
+    用 Plotly 画 K 线 + 60 日线，默认保存 PNG（也可改 HTML）
+    """
+    try:
+        need = {'trade_date', 'open', 'high', 'low', 'close', 'ma60'}
+        if not need.issubset(df.columns):
+            print(f'[Plotly] 缺少字段：{need - set(df.columns)}')
+            return False
+
+        df = df.copy()
+        df['trade_date'] = pd.to_datetime(df['trade_date']).dt.strftime('%Y-%m-%d')
+
+        fig = make_subplots(
+            rows=1, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.02
+        )
+
+        # 1. K 线
+        fig.add_trace(
+            go.Candlestick(
+                x=df['trade_date'],
+                open=df['open'],
+                high=df['high'],
+                low=df['low'],
+                close=df['close'],
+                name='K 线',
+                increasing_line_color='red',
+                decreasing_line_color='green'
+            )
+        )
+
+        # 2. 60 日均线
+        fig.add_trace(
+            go.Scatter(
+                x=df['trade_date'],
+                y=df['ma60'],
+                mode='lines',
+                line=dict(color='orange', width=2),
+                name='60日均线'
+            )
+        )
+
+        # 3. 填充区域：收盘价 > 60 日线
+        fig.add_trace(
+            go.Scatter(
+                x=df['trade_date'],
+                y=df['close'],
+                fill='tonexty',
+                fillcolor='rgba(0,250,0,0.1)',
+                line=dict(color='rgba(0,0,0,0)'),
+                hoverinfo='skip',
+                showlegend=True,
+                name='站上60日线'
+            )
+        )
+
+        # 4. 布局
+        fig.update_layout(
+            title=f'{stock_name}  收盘价 & 60日均线',
+            yaxis_title='价格',
+            xaxis_title='日期',
+            xaxis_rangeslider_visible=False,
+            template='plotly_white',
+            width=1000,
+            height=500
+        )
+
+        # 5. 保存
+        if filename.lower().endswith('.html'):
+            fig.write_html(filename)
+        else:
+            fig.write_image(filename, engine='kaleido')
+
+        print(f'[Plotly] 图表已保存：{filename}')
+        return True
+    except Exception as e:
+        print(f'[Plotly] 绘图失败：{e}')
+        return False
+
+
+# ----------------- 函数 -----------------
+def safe_get_data(func, *args, **kwargs):
+    """安全获取数据，带重试机制"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            result = func(*args, **kwargs)
+            if result is not None and not result.empty:
+                return result
+            time.sleep(2)
+        except Exception as e:
+            print(f"第{attempt+1}次尝试失败: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(3)
+            else:
+                print(f"所有尝试都失败了")
+    return None
+
+def get_etf_symbol(code):
+    """根据ETF代码判断交易所并添加前缀"""
+    if code.startswith('15') or code.startswith('16') or code.startswith('18'):
+        return f'sz{code}'
+    else:
+        return f'sh{code}'
+
+def get_stock_data(stock_code, stock_type, days=120):
+    """获取股票或ETF日K线数据并计算60日均线"""
+    try:
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=days+60)).strftime('%Y%m%d')
+        
+        if stock_type == "stock":
+            df = safe_get_data(ak.stock_zh_a_hist, 
+                             symbol=stock_code, 
+                             period="daily", 
+                             start_date=start_date, 
+                             end_date=end_date, 
+                             adjust="qfq")
+        else:
+            symbol_sina = get_etf_symbol(stock_code)
+            df_sina = safe_get_data(ak.fund_etf_hist_sina, symbol=symbol_sina)
+            
+            if df_sina is not None:
+                print(f"使用新浪接口获取 {stock_code} 数据")
+                df = df_sina
+                df = df.rename(columns={'date': 'trade_date'})
+                df['trade_date'] = pd.to_datetime(df['trade_date'])
+                mask = (df['trade_date'] >= pd.to_datetime(start_date)) & (df['trade_date'] <= pd.to_datetime(end_date))
+                df = df.loc[mask]
+            else:
+                print(f"新浪接口失败，尝试东方财富接口获取 {stock_code}")
+                df = safe_get_data(ak.fund_etf_hist_em, 
+                                 symbol=stock_code, 
+                                 period="daily", 
+                                 start_date=start_date, 
+                                 end_date=end_date, 
+                                 adjust="qfq")
+                if df is None:
+                    print(f"无法获取ETF {stock_code} 的历史数据，尝试备用方法")
+                    try:
+                        spot_df = safe_get_data(ak.fund_etf_spot_em)
+                        if spot_df is not None:
+                            etf_info = spot_df[spot_df['代码'] == stock_code]
+                            if not etf_info.empty:
+                                current_price = etf_info.iloc[0]['最新价']
+                                dates = pd.date_range(end=datetime.now(), periods=days+60, freq='D')
+                                df = pd.DataFrame({
+                                    'trade_date': dates,
+                                    'close': current_price,
+                                    'open': current_price,
+                                    'high': current_price,
+                                    'low': current_price,
+                                    'volume': 0
+                                })
+                            else:
+                                print(f"未找到ETF {stock_code} 的实时数据")
+                                return None
+                        else:
+                            print(f"无法获取ETF实时数据")
+                            return None
+                    except Exception as e:
+                        print(f"ETF备用数据获取失败: {e}")
+                        return None
+        
+        if df is None or df.empty or len(df) < 60:
+            print(f"无法获取 {stock_code} 的数据")
+            return None
+
+        # 统一重命名列
+        rename_map = {
+            '日期': 'trade_date',
+            '收盘': 'close',
+            '开盘': 'open',
+            '最高': 'high',
+            '最低': 'low',
+            '成交量': 'volume',
+            '成交额': 'amount',
+            '涨跌幅': 'pct_chg'
+        }
+        for old, new in rename_map.items():
+            if old in df.columns:
+                df = df.rename(columns={old: new})
+        
+        # 确保必要的列存在
+        required_cols = ['trade_date', 'close', 'open', 'high', 'low']
+        for col in required_cols:
+            if col not in df.columns:
+                print(f"数据缺少必要列: {col}")
+                return None
+        
+        df['trade_date'] = pd.to_datetime(df['trade_date'])
+        df = df.sort_values('trade_date')
+        df['ma60'] = df['close'].rolling(window=60, min_periods=1).mean()
+        df['above'] = df['close'] > df['ma60']
+        return df.tail(days)
+        
+    except Exception as e:
+        print(f"获取 {stock_code} 数据失败: {e}")
+        return None
+    try:
+        # 1. 整理数据
+        plot_df = df.rename(columns={
+            'trade_date': 'time',
+            'open': 'open',
+            'high': 'high',
+            'low': 'low',
+            'close': 'close'
+        })
+        plot_df['time'] = pd.to_datetime(plot_df['time']).dt.strftime('%Y-%m-%d')
+
+        # 2. 创建图表
+        chart = lwc.chart(stock_name + ' 收盘价 & 60日均线', width=800, height=420)
+
+        # 3. 画蜡烛图
+        chart.set(plot_df)
+
+        # 4. 叠加 60 日均线
+        chart.line(plot_df[['time', 'ma60']].rename(columns={'ma60': 'value'}),
+                   color='orange', width=2, title='60日均线')
+
+        # 5. 保存
+        chart.save(filename)
+        print(f'[绘图] 交互式图表已保存：{filename}')
+        return True
+    except Exception as e:
+        print(f'[绘图] 失败：{e}')
+        return False
+# ----------------- 主逻辑 -----------------
+def main():
+    for stock in STOCK_LIST:
+        code = stock["code"]
+        name = stock["name"]
+        stock_type = stock["type"]
+        
+        print(f"正在处理 {name}({code})...")
+        df = get_stock_data(code, stock_type)
+        if df is None:
+            print(f"跳过 {name}，无法获取数据")
+            continue
+
+        if len(df) < 2:
+            print(f"{name} 数据不足，跳过")
+            continue
+
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
+
+        if not prev['above'] and latest['above']:
+            print(f"✅ {name} 今日新站上60日线，生成买入信号。")
+            chart_file = f'{name}_{code}_{datetime.now():%Y%m%d}.png'  
+
+            
+            # 绘制图表
+            if plot_stock_ma60(df, name, chart_file):
+                msg = f"""【买入信号】{name} 站上60日线
+
+检测时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+当前价格：{latest['close']:.2f}
+60日均线：{latest['ma60']:.2f}
+状态：✅ 站上60日线（建议关注买入机会）
+"""
+                send_email_if_signal(msg, chart_file)
+            else:
+                print(f"图表生成失败，跳过邮件发送")
+        else:
+            status = "站上" if latest['above'] else "低于"
+            print(f"{name} 当前{status}60日线，未触发买入信号。")
+
+# ----------------- 执行 -----------------
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,58 @@
+name: 股票预警系统
+
+on:
+  schedule:
+    - cron: '0 10 * * 1-5'  # 每个工作日10:00执行
+    - cron: '0 14 * * 1-5'  # 每个工作日14:00执行
+    - cron: '30 16 * * 1-5'  # 每个工作日16:30执行
+
+  push:
+    branches:
+      - main  # 当代码推送到main分支时触发
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  run-stock-alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies and Chinese fonts
+      run: |
+        pip install -r requirements.txt
+        pip install matplotlib==3.7.5  # 确保安装matplotlib
+        # 安装中文字体以解决乱码问题
+        sudo apt-get update
+        sudo apt-get install -y fonts-wqy-zenhei fonts-wqy-microhei ttf-wqy-zenhei ttf-wqy-microhei fontconfig
+    
+    - name: Create output directory
+      run: |
+        mkdir -p /tmp/红利红绿灯
+        chmod 777 /tmp/红利红绿灯
+    
+    - name: Run Stock Alert script
+      env:
+        SAVE_DIR: /tmp/红利红绿灯
+      run:
+        python stock_alert.py
+    
+    - name: Archive output images
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stock-alert-charts
+        path: /tmp/红利红绿灯/*.png
+        retention-days: 7
+    
+    - name: Clean up temporary files
+      if: always()
+      run: rm -rf /tmp/红利红绿灯
