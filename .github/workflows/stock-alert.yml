@@ -15,6 +15,10 @@ on:
 jobs:
   run-stock-alert:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 允许写入内容
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
     
     steps:
       #  checkout 代码

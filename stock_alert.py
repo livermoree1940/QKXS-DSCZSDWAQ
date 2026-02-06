@@ -83,8 +83,14 @@ matplotlib.use('Agg')  # 非交互式后端
 # 设置matplotlib中文显示
 import platform
 import matplotlib.font_manager as fm
+import matplotlib
 
-if platform.system() == 'Windows':
+# 在Linux环境中（GitHub Actions），确保使用支持中文的字体
+if platform.system() == 'Linux':
+    # 对于GitHub Actions的Ubuntu环境，使用DejaVu Sans字体，它支持基本的中文字符
+    plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "WenQuanYi Micro Hei", "Heiti TC"]
+    plt.rcParams["font.family"] = "sans-serif"
+elif platform.system() == 'Windows':
     windows_fonts = ['SimHei', 'Microsoft YaHei', 'SimSun', 'FangSong']
     available_fonts = []
     for font in fm.fontManager.ttflist:
@@ -98,20 +104,15 @@ if platform.system() == 'Windows':
         plt.rcParams["font.sans-serif"] = ["SimHei"]
         warnings.filterwarnings("ignore", category=UserWarning, message="Glyph.*missing from font")
 else:
-    linux_fonts = ['WenQuanYi Micro Hei', 'WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei']
-    available_fonts = []
-    for font in fm.fontManager.ttflist:
-        if font.name in linux_fonts:
-            available_fonts.append(font.name)
-    
-    if available_fonts:
-        plt.rcParams["font.sans-serif"] = [available_fonts[0]]
-        plt.rcParams["font.family"] = "sans-serif"
-    else:
-        plt.rcParams["font.sans-serif"] = ["WenQuanYi Micro Hei"]
-        warnings.filterwarnings("ignore", category=UserWarning, message="Glyph.*missing from font")
+    # 其他系统
+    plt.rcParams["font.sans-serif"] = ["Arial Unicode MS", "WenQuanYi Micro Hei", "Heiti TC"]
+    plt.rcParams["font.family"] = "sans-serif"
 
 plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
+# 强制使用UTF-8编码
+matplotlib.rcParams['font.family'] = 'sans-serif'
+matplotlib.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei', 'WenQuanYi Micro Hei']
+matplotlib.rcParams['axes.unicode_minus'] = False
 
 # 定义保存HTML输出的文件夹
 ALERT_OUTPUT_DIR = os.environ.get('ALERT_OUTPUT_DIR', os.path.join(os.getcwd(), 'alert_output'))
